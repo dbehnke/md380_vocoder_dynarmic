@@ -1,9 +1,11 @@
 #include <cstdint>
 
 extern unsigned char firmware[];
+extern unsigned char firmware[];
 extern unsigned int firmware_len;
 
 extern unsigned char sram[];
+extern unsigned int sram_len;
 extern unsigned int sram_len;
 
 const uint32_t ambe_decode_wav = 0x08051248;

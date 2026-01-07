@@ -120,9 +120,9 @@ class MD380Emulator {
         MD380Emulator(uint8_t* firmware_blob, uint8_t* sram_blob) :
             env{}, user_config{.callbacks = &env}, cpu{user_config} {
             env.cpu = &cpu;
-            // Copy 1MB firmware blob
-            env.firmware.resize(0x100000);
-            std::copy(firmware_blob, firmware_blob + 0x100000, env.firmware.begin());
+            // Copy firmware blob, respecting actual length, padding the rest of 1MB with zeros
+            env.firmware.resize(0x100000); // Zero-initialized by default
+            std::copy(firmware_blob, firmware_blob + firmware_len, env.firmware.begin());
             std::copy(sram_blob, sram_blob + 0x20000, env.sram.begin());
         }
 

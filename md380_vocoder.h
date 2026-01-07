@@ -25,4 +25,12 @@ void md380_decode(uint8_t *ambe, int16_t *pcm); // reads 49 bits (packed into 7 
 void md380_encode(uint8_t *ambe, int16_t *pcm); // reads 160 int16_t elements from pcm, writes 49 bits (packed into 7 uint8_t elements in MSB order) of AMBE+2 to ambe49.
 void md380_decode_fec(uint8_t *ambe, int16_t *pcm);
 void md380_encode_fec(uint8_t *ambe, int16_t *pcm);
+
+// New Context-Aware API
+void* md380_new();
+void md380_free(void* ctx);
+void md380_decode_ctx(void* ctx, uint8_t *ambe, int16_t *pcm);
+void md380_encode_ctx(void* ctx, uint8_t *ambe, int16_t *pcm);
+void md380_decode_fec_ctx(void* ctx, uint8_t *ambe, int16_t *pcm);
+void md380_encode_fec_ctx(void* ctx, uint8_t *ambe, int16_t *pcm);
                       

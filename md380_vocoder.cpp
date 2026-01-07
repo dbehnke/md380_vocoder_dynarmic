@@ -21,13 +21,13 @@ class MD380Environment final : public Dynarmic::A32::UserCallbacks {
 public:
     u64 ticks_left = 0;
     Dynarmic::A32::Jit* cpu;
-    uint8_t* firmware{}; // At 0x0800C000
+    std::vector<u8> firmware; // Instance-local copy
     std::array<u8, 0x20000> sram{}; // At 0x20000000
     std::array<u8, 0x20000> tcram{}; // At 0x10000000
     std::array<u8, 0x10000> stack{}; // At 0x21000000
 
     u8 MemoryRead8(u32 vaddr) override {
-        if (vaddr >= 0x0800C000 && vaddr < 0x0800C000 + 0x100000) {
+        if (vaddr >= 0x0800C000 && vaddr < 0x0800C000 + firmware.size()) {
             return firmware[vaddr - 0x0800C000];
         }
         if (vaddr >= 0x20000000 && vaddr < 0x20000000 + sram.size()) {
@@ -58,7 +58,7 @@ public:
     }
 
     void MemoryWrite8(u32 vaddr, u8 value) override {
-        if (vaddr >= 0x0800C000 && vaddr < 0x0800C000 + 0x100000) {
+        if (vaddr >= 0x0800C000 && vaddr < 0x0800C000 + firmware.size()) {
             firmware[vaddr - 0x0800C000] = vaddr;
             return;
         }
@@ -117,11 +117,13 @@ class MD380Emulator {
         Dynarmic::A32::UserConfig user_config;
         Dynarmic::A32::Jit cpu;
     public:
-        MD380Emulator(uint8_t* firmware, uint8_t* sram) :
+        MD380Emulator(uint8_t* firmware_blob, uint8_t* sram_blob) :
             env{}, user_config{.callbacks = &env}, cpu{user_config} {
             env.cpu = &cpu;
-            env.firmware = firmware;
-            std::copy(sram, sram + 0x20000, env.sram.begin());
+            // Copy 1MB firmware blob
+            env.firmware.resize(0x100000);
+            std::copy(firmware_blob, firmware_blob + 0x100000, env.firmware.begin());
+            std::copy(sram_blob, sram_blob + 0x20000, env.sram.begin());
         }
 
         void AmbeUnpackFrame(uint8_t* ambeFrame) {
@@ -219,12 +221,15 @@ MD380Emulator *emulator;
 
 int md380_init()
 {
-	emulator = new MD380Emulator(firmware, sram);
+    if (!emulator) {
+	    emulator = new MD380Emulator(firmware, sram);
+    }
 	return 0;
 }
 
 void md380_decode(uint8_t *ambe, int16_t *pcm)
 {
+    if (!emulator) md380_init();
 	uint8_t frame[8] = {0};
     memcpy(&frame[1], ambe, 7);
 	emulator->AmbeDecodeFrame(frame, pcm);
@@ -232,9 +237,39 @@ void md380_decode(uint8_t *ambe, int16_t *pcm)
 
 void md380_encode(uint8_t *ambe, int16_t *pcm)
 {
+    if (!emulator) md380_init();
 	uint8_t frame[8] = {0};
 	emulator->AmbeEncodeFrame(pcm, frame);
 	memcpy(ambe, &frame[1], 7);
+}
+
+// New Instance API
+void* md380_new() {
+    return new MD380Emulator(firmware, sram);
+}
+
+void md380_free(void* ctx) {
+    if (ctx) {
+        delete (MD380Emulator*)ctx;
+    }
+}
+
+void md380_decode_ctx(void* ctx, uint8_t *ambe, int16_t *pcm) {
+    auto emu = (MD380Emulator*)ctx;
+    if (emu) {
+        uint8_t frame[8] = {0};
+        memcpy(&frame[1], ambe, 7);
+        emu->AmbeDecodeFrame(frame, pcm);
+    }
+}
+
+void md380_encode_ctx(void* ctx, uint8_t *ambe, int16_t *pcm) {
+    auto emu = (MD380Emulator*)ctx;
+    if (emu) {
+        uint8_t frame[8] = {0};
+        emu->AmbeEncodeFrame(pcm, frame);
+        memcpy(ambe, &frame[1], 7);
+    }
 }
 
 void md380_decode_fec(uint8_t *ambe, int16_t *pcm)
@@ -298,6 +333,111 @@ void md380_encode_fec(uint8_t *ambe, int16_t *pcm)
 	uint8_t ambe49[9] = {0};
 
 	md380_encode(ambe49, pcm);
+	
+	for (unsigned int i = 0U; i < 12U; i++, MASK >>= 1) {
+		unsigned int n1 = i + 0U;
+		unsigned int n2 = i  + 12U;
+		if (READ_BIT(ambe49, n1))
+			aOrig |= MASK;
+		if (READ_BIT(ambe49, n2))
+			bOrig |= MASK;
+	}
+
+	MASK = 0x1000000U;
+	for (unsigned int i = 0U; i < 25U; i++, MASK >>= 1) {
+		unsigned int n = i + 24U;
+		if (READ_BIT(ambe49, n))
+			cOrig |= MASK;
+	}
+
+	unsigned int a = ENCODING_TABLE_24128[aOrig];
+
+	// The PRNG
+	unsigned int p = PRNG_TABLE[aOrig] >> 1;
+
+	unsigned int b = ENCODING_TABLE_23127[bOrig] >> 1;
+	b ^= p;
+
+	MASK = 0x800000U;
+	for (unsigned int i = 0U; i < 24U; i++, MASK >>= 1) {
+		unsigned int aPos = A_TABLE[i];
+		WRITE_BIT(ambe, aPos, a & MASK);
+	}
+
+	MASK = 0x400000U;
+	for (unsigned int i = 0U; i < 23U; i++, MASK >>= 1) {
+		unsigned int bPos = B_TABLE[i];
+		WRITE_BIT(ambe, bPos, b & MASK);
+	}
+
+	MASK = 0x1000000U;
+	for (unsigned int i = 0U; i < 25U; i++, MASK >>= 1) {
+		unsigned int cPos = C_TABLE[i];
+		WRITE_BIT(ambe, cPos, cOrig & MASK);
+	}
+}
+
+void md380_decode_fec_ctx(void* ctx, uint8_t *ambe, int16_t *pcm)
+{
+	unsigned int a = 0U;
+	unsigned int MASK = 0x800000U;
+	uint8_t ambe49[9] = {0};
+	uint8_t frame[8] = {0};
+
+	for (unsigned int i = 0U; i < 24U; i++, MASK >>= 1) {
+		unsigned int aPos = A_TABLE[i];
+		if (READ_BIT(ambe, aPos))
+			a |= MASK;
+	}
+
+	unsigned int b = 0U;
+	MASK = 0x400000U;
+	for (unsigned int i = 0U; i < 23U; i++, MASK >>= 1) {
+		unsigned int bPos = B_TABLE[i];
+		if (READ_BIT(ambe, bPos))
+			b |= MASK;
+	}
+
+	unsigned int c = 0U;
+	MASK = 0x1000000U;
+	for (unsigned int i = 0U; i < 25U; i++, MASK >>= 1) {
+		unsigned int cPos = C_TABLE[i];
+		if (READ_BIT(ambe, cPos))
+			c |= MASK;
+	}
+
+	a >>= 12;
+
+	// The PRNG
+	b ^= (PRNG_TABLE[a] >> 1);
+	b >>= 11;
+
+	MASK = 0x000800U;
+	for (unsigned int i = 0U; i < 12U; i++, MASK >>= 1) {
+		unsigned int aPos = i + 0U;
+		unsigned int bPos = i + 12U;
+		WRITE_BIT(ambe49, aPos, a & MASK);
+		WRITE_BIT(ambe49, bPos, b & MASK);
+	}
+
+	MASK = 0x1000000U;
+	for (unsigned int i = 0U; i < 25U; i++, MASK >>= 1) {
+		unsigned int cPos = i + 24U;
+		WRITE_BIT(ambe49, cPos, c & MASK);
+	}
+
+	md380_decode_ctx(ctx, ambe49, pcm);
+}
+
+void md380_encode_fec_ctx(void* ctx, uint8_t *ambe, int16_t *pcm)
+{
+	unsigned int aOrig = 0U;
+	unsigned int bOrig = 0U;
+	unsigned int cOrig = 0U;
+	unsigned int MASK = 0x000800U;
+	uint8_t ambe49[9] = {0};
+
+	md380_encode_ctx(ctx, ambe49, pcm);
 	
 	for (unsigned int i = 0U; i < 12U; i++, MASK >>= 1) {
 		unsigned int n1 = i + 0U;

@@ -6,6 +6,7 @@
 #include <exception>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 
 #include "tables.h"
 
@@ -116,6 +117,7 @@ class MD380Emulator {
         MD380Environment env;
         Dynarmic::A32::UserConfig user_config;
         Dynarmic::A32::Jit cpu;
+        std::mutex m_mutex;
     public:
         MD380Emulator(uint8_t* firmware_blob, uint8_t* sram_blob) :
             env{}, user_config{.callbacks = &env}, cpu{user_config} {
@@ -161,6 +163,7 @@ class MD380Emulator {
             cpu.Run();
         }
         void AmbeDecodeFrame(uint8_t* ambeFrame, int16_t* audioOutput) {
+            std::lock_guard<std::mutex> lock(m_mutex);
             // printf("MD380Emulator: AmbeDecodeFrame start\n");
             AmbeUnpackFrame(ambeFrame);
             AmbeDecodeExecute(ambe_outbuffer0, 0);
@@ -208,6 +211,7 @@ class MD380Emulator {
             cpu.Run();
         }
         void AmbeEncodeFrame(int16_t* audioInput, uint8_t* ambeFrame) {
+            std::lock_guard<std::mutex> lock(m_mutex);
             // printf("MD380Emulator: AmbeEncodeFrame start\n");
             int16_t* inbuf0 = (int16_t*) &env.sram[wav_inbuffer0 - 0x20000000];
             int16_t* inbuf1 = (int16_t*) &env.sram[wav_inbuffer1 - 0x20000000];

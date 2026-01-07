@@ -120,10 +120,10 @@ class MD380Emulator {
         MD380Emulator(uint8_t* firmware_blob, uint8_t* sram_blob) :
             env{}, user_config{.callbacks = &env}, cpu{user_config} {
             env.cpu = &cpu;
-            // Copy firmware blob, respecting actual length, padding the rest of 1MB with zeros
             env.firmware.resize(0x100000); // Zero-initialized by default
             std::copy(firmware_blob, firmware_blob + firmware_len, env.firmware.begin());
-            std::copy(sram_blob, sram_blob + 0x20000, env.sram.begin());
+            std::copy(sram_blob, sram_blob + sram_len, env.sram.begin());
+            printf("MD380Emulator: Initialized with FW len %u, SRAM len %u\n", firmware_len, sram_len);
         }
 
         void AmbeUnpackFrame(uint8_t* ambeFrame) {
@@ -161,6 +161,7 @@ class MD380Emulator {
             cpu.Run();
         }
         void AmbeDecodeFrame(uint8_t* ambeFrame, int16_t* audioOutput) {
+            // printf("MD380Emulator: AmbeDecodeFrame start\n");
             AmbeUnpackFrame(ambeFrame);
             AmbeDecodeExecute(ambe_outbuffer0, 0);
             int16_t* outbuf0 = (int16_t*) &env.sram[ambe_outbuffer0 - 0x20000000];
@@ -168,6 +169,7 @@ class MD380Emulator {
             AmbeDecodeExecute(ambe_outbuffer1, 1);
             int16_t* outbuf1 = (int16_t*) &env.sram[ambe_outbuffer1 - 0x20000000];
             std::copy(outbuf1, outbuf1 + 80, audioOutput + 80);
+            // printf("MD380Emulator: AmbeDecodeFrame end\n");
         }
         void AmbePackFrame(int16_t* ambeUnpacked, uint8_t* ambeFrame) {
 			ambeFrame[0] = 0;
@@ -204,7 +206,9 @@ class MD380Emulator {
             env.ticks_left = 1000000000;
             cpu.Run();
         }
+        }
         void AmbeEncodeFrame(int16_t* audioInput, uint8_t* ambeFrame) {
+            // printf("MD380Emulator: AmbeEncodeFrame start\n");
             int16_t* inbuf0 = (int16_t*) &env.sram[wav_inbuffer0 - 0x20000000];
             int16_t* inbuf1 = (int16_t*) &env.sram[wav_inbuffer1 - 0x20000000];
             std::copy(audioInput, audioInput + 80, inbuf0);

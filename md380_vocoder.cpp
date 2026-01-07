@@ -205,7 +205,7 @@ class MD380Emulator {
 
             env.ticks_left = 1000000000;
             cpu.Run();
-        }
+            cpu.Run();
         }
         void AmbeEncodeFrame(int16_t* audioInput, uint8_t* ambeFrame) {
             // printf("MD380Emulator: AmbeEncodeFrame start\n");
